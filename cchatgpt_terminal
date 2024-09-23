@@ -1,0 +1,120 @@
+#include <iostream>
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
+#include <string>
+
+using namespace std;
+using json = nlohmann::json;
+string apiKey = "";
+
+
+class RequestBuilder {
+public:
+    static string buildRequest(const string& question) {
+        json requestBody = {
+            {"model", "gpt-4"},
+            {"messages", json::array({
+                {{"role", "system"}, {"content", "You are ChatGPT, a large language model."}},
+                {{"role", "user"}, {"content", question}}
+            })}
+        };
+        return requestBody.dump();
+    }
+};
+
+class ResponseParser {
+public:
+    static string parseResponse(const string& responseStr) {
+        json jsonResponse = json::parse(responseStr);
+        return jsonResponse["choices"][0]["message"]["content"];
+    }
+};
+
+class ChatGPTClient {
+private:
+    static size_t WriteCallback(void* contents, size_t size, size_t nmemb, string* s) {
+        size_t totalSize = size * nmemb;
+        s->append((char*)contents, totalSize);
+        return totalSize;
+    }
+
+public:
+    string sendRequest(const string& question) const {
+        CURL* curl;
+        CURLcode res;
+        string response;
+        string readBuffer;
+
+        curl = curl_easy_init();
+        if (curl) {
+            string apiUrl = "https://api.openai.com/v1/chat/completions";
+
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, ("Authorization: Bearer " + apiKey).c_str());
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+
+            string requestBodyStr = RequestBuilder::buildRequest(question);
+
+            curl_easy_setopt(curl, CURLOPT_URL, apiUrl.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+
+            // Perform the request
+            res = curl_easy_perform(curl);
+
+            if (res != CURLE_OK) {
+                cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << endl;
+            }
+
+            // curl_easy_cleanup(curl);
+            // curl_slist_free_all(headers);
+        }
+
+        return ResponseParser::parseResponse(readBuffer);
+    }
+};
+
+class UserInteraction {
+public:
+    string getInput(const string& prompt) const {
+        string input;
+        cout << prompt;
+        getline(cin, input);
+        return input;
+    }
+
+    void displayResponse(const string& response) const {
+        cout << "ChatGPT: " << response << endl;
+    }
+
+    bool shouldExit(const string& input) const {
+        return input == "exit";
+    }
+};
+
+class ChatGPTApp {
+private:
+    ChatGPTClient client;
+    UserInteraction ui;
+
+public:
+    void run() {
+        while (true) {
+            string question = ui.getInput("\nAsk a question (type 'exit' to quit): ");
+            if (ui.shouldExit(question)) {
+                break;
+            }
+
+            string answer = client.sendRequest(question);
+            ui.displayResponse(answer);
+        }
+    }
+};
+
+int main() {
+    ChatGPTApp app;
+    app.run();
+    return 0;
+}
